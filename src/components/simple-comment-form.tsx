@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import {
   useAccount,
   useChainId,
@@ -11,13 +12,7 @@ import {
 } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
 import {
@@ -32,11 +27,7 @@ import {
   Trash2,
   ImageIcon,
   Hash,
-  Link,
-  Settings,
-  Share,
   Send,
-  Globe,
   Ellipsis,
   Unplug,
 } from "lucide-react";
@@ -44,15 +35,8 @@ import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
 import { InvalidCommentError } from "@ecp.eth/shared/errors";
-import { CommentFormErrors } from "./CommentFormErrors";
 import type { Hex } from "viem";
 import { toast } from "sonner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -174,14 +158,26 @@ export function SimpleCommentForm() {
 
       const data = await response.json();
 
-      // Sort channels to put "home" first if it exists
+      // Sort channels to put "home" first if it exists, then reverse the order of non-home channels
       const sortedChannels = data.results.sort((a: Channel, b: Channel) => {
         if (a.name.toLowerCase() === "home") return -1;
         if (b.name.toLowerCase() === "home") return 1;
         return 0;
       });
 
-      setChannels(sortedChannels);
+      // Reverse the order of non-home channels
+      const homeChannel = sortedChannels.find(
+        (c: Channel) => c.name.toLowerCase() === "home"
+      );
+      if (homeChannel) {
+        const nonHomeChannels = sortedChannels
+          .filter((c: Channel) => c.name.toLowerCase() !== "home")
+          .reverse();
+        const finalChannels = [homeChannel, ...nonHomeChannels];
+        setChannels(finalChannels);
+      } else {
+        setChannels(sortedChannels);
+      }
 
       // Set "home" as default if available, otherwise first channel
       if (sortedChannels.length > 0 && !channelId) {
@@ -306,39 +302,49 @@ export function SimpleCommentForm() {
             );
           });
 
+        // First, get app signature from the signer service
+        const appAddress = "0x62806f1e22DF2C467B458DEB19c5a62CC9127796";
+
+        console.log("Getting app signature from signer service...");
+        const signResponse = await fetch(
+          "https://share-ethcomments-signer-service.vercel.app/api/post-comment/sign",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              author: address,
+              content,
+              metadata: metadata
+                .filter((entry) => entry.key.trim() && entry.value.trim())
+                .map((entry) => ({
+                  key: entry.key,
+                  value: entry.value,
+                  type: entry.type,
+                })),
+              targetUri: targetUri || window.location.href,
+            }),
+          }
+        );
+
+        if (!signResponse.ok) {
+          const errorText = await signResponse.text();
+          console.error("Signer service error:", errorText);
+          throw new Error(
+            `Failed to get app signature: ${signResponse.status} ${errorText}`
+          );
+        }
+
+        const signResult = await signResponse.json();
+
         // Create comment data using ECP SDK
-        const commentData = createCommentData({
-          content,
-          targetUri: targetUri || window.location.href,
-          channelId: BigInt(channelId || "0"),
-          metadata: ecpMetadata,
-          author: address,
-          app: address, // Using the same address as app for simplicity
-          deadline: BigInt(Math.floor(Date.now() / 1000) + 3600), // 1 hour from now
-        });
+        const commentData = createCommentData(signResult.data);
 
-        console.log("Comment data created:", {
-          author: address,
-          contentLength: content.length,
-          targetUri: targetUri || window.location.href,
-          channelId: parseInt(channelId),
-          metadataCount: ecpMetadata.length,
-          deadline: Math.floor(Date.now() / 1000) + 3600,
-        });
-
-        console.log("Posting comment to blockchain:", {
-          author: address,
-          content,
-          targetUri: targetUri || window.location.href,
-          channelId: parseInt(channelId),
-          metadata: ecpMetadata,
-        });
-
-        // Post comment using ECP SDK
-        console.log("Calling postComment with ECP SDK...");
+        // Post comment using ECP SDK with app signature
         const result = await postComment({
           comment: commentData,
-          appSignature: "0x", // For direct posting, no app signature needed
+          appSignature: signResult.signature, // Use the app signature from the signer service
           writeContract: async (args) => {
             console.log("writeContract called with args:", {
               functionName: args.functionName,
@@ -415,7 +421,9 @@ export function SimpleCommentForm() {
         errorMessage = error.message;
 
         // Handle specific error types
-        if (error.message.includes("insufficient funds")) {
+        if (error.message.includes("Failed to get app signature")) {
+          errorMessage = "Failed to sign comment. Please try again.";
+        } else if (error.message.includes("insufficient funds")) {
           errorMessage = "Insufficient funds for transaction";
         } else if (error.message.includes("user rejected")) {
           errorMessage = "Transaction was rejected by user";
@@ -551,7 +559,7 @@ export function SimpleCommentForm() {
           <div className="space-y-6">
             <Editor
               className={cn(
-                "w-full p-2 border rounded min-h-[200px]",
+                "w-full p-2 rounded min-h-[200px] border-none shadow-none",
                 submitMutation.error &&
                   submitMutation.error instanceof InvalidCommentError &&
                   "border-destructive focus-visible:border-destructive"
@@ -776,8 +784,13 @@ export function SimpleCommentForm() {
                   className="ml-auto"
                   disabled={isSubmitting || chainId !== base.id}
                 >
-                  <Send />
-                  {formState === "post" ? "Sharing..." : "Share onchain"}
+                  <Image
+                    src="/logo-dark.svg"
+                    alt="Logo"
+                    width={16}
+                    height={16}
+                  />
+                  {formState === "post" ? "Sharing..." : "Share to ECP"}
                 </Button>
               </div>
             </div>
