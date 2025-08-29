@@ -302,11 +302,8 @@ export function SimpleCommentForm() {
             );
           });
 
-        // First, get app signature from the signer service
-        const appAddress = "0x62806f1e22DF2C467B458DEB19c5a62CC9127796";
-
-        console.log("Getting app signature from signer service...");
         const signResponse = await fetch(
+          // Deploy your own signer service to Vercel in 1 click: https://github.com/ecp-eth/comments-monorepo/tree/main/examples/signer
           "https://share-ethcomments-signer-service.vercel.app/api/post-comment/sign",
           {
             method: "POST",
@@ -316,13 +313,7 @@ export function SimpleCommentForm() {
             body: JSON.stringify({
               author: address,
               content,
-              metadata: metadata
-                .filter((entry) => entry.key.trim() && entry.value.trim())
-                .map((entry) => ({
-                  key: entry.key,
-                  value: entry.value,
-                  type: entry.type,
-                })),
+              metadata: ecpMetadata,
               targetUri: targetUri || window.location.href,
             }),
           }
