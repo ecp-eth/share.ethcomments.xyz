@@ -114,7 +114,7 @@ interface MetadataEntry {
 }
 
 export function SimpleCommentForm() {
-  const { address, isConnected } = useAccount();
+  const { address, isConnected, status } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
@@ -129,14 +129,6 @@ export function SimpleCommentForm() {
 
   const editorRef = useRef<EditorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Helper function to abbreviate text with ellipsis only when needed
-  const abbreviateText = (text: string, maxLength: number): string => {
-    if (!text || text.length <= maxLength) {
-      return text;
-    }
-    return text.slice(0, maxLength) + "...";
-  };
 
   const uploads = usePinataUploadFiles({
     allowedMimeTypes: Array.from(ALLOWED_UPLOAD_MIME_TYPES),
@@ -432,7 +424,9 @@ export function SimpleCommentForm() {
         } else if (error.message.includes("chain")) {
           errorMessage = "Please switch to Base network";
         } else if (error.message.includes("content")) {
-          errorMessage = "Invalid comment content";
+          errorMessage = "Comment cannot be empty";
+        } else if (error.message === "No wallet address available") {
+          errorMessage = "Please connect your wallet";
         }
       }
 
@@ -495,25 +489,6 @@ export function SimpleCommentForm() {
     fileInputRef.current?.click();
   }, []);
 
-  if (!isConnected) {
-    return (
-      <Card className="w-full max-w-2xl mx-auto">
-        <CardHeader>
-          <CardTitle>Connect Your Wallet</CardTitle>
-          <CardDescription>
-            Connect your wallet to start commenting on the Ethereum Comments
-            Protocol
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex justify-center">
-            <ConnectButton />
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <form
       action={async (formData: FormData) => {
@@ -526,7 +501,9 @@ export function SimpleCommentForm() {
       className="space-y-4"
     >
       <div className="flex justify-between items-center">
-        {address && (
+        {status === "disconnected" && !isConnected && <ConnectButton />}
+
+        {address ? (
           <div className="flex items-center gap-4 text-sm text-muted-foreground ml-auto">
             <div className="flex items-center gap-2 text-sm">
               {address.slice(0, 6)}...{address.slice(-4)}
@@ -534,6 +511,7 @@ export function SimpleCommentForm() {
             <Button
               variant="ghost"
               size="sm"
+              type="button"
               onClick={() => disconnect()}
               className="text-xs"
             >
@@ -552,6 +530,12 @@ export function SimpleCommentForm() {
                     </code>
                   </div> */}
           </div>
+        ) : (
+          (status === "connecting" || status === "reconnecting") && (
+            <div className="flex items-center gap-4 text-sm text-muted-foreground ml-auto">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400 dark:border-gray-100"></div>
+            </div>
+          )
         )}
       </div>
       <Card className="w-full max-w-2xl mx-auto">
@@ -600,11 +584,11 @@ export function SimpleCommentForm() {
                       className="flex items-center gap-2"
                     >
                       <Hash className="h-4 w-4" />
-                      {abbreviateText(
+                      {/* {abbreviateText(
                         channels.find((c) => c.id === channelId)?.name ||
                           "Channel",
                         10
-                      )}
+                      )} */}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-80">
@@ -639,7 +623,7 @@ export function SimpleCommentForm() {
                             rel="noopener noreferrer"
                             className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
                           >
-                            View channel details
+                            Learn more about channels
                           </a>
                           .
                         </p>
@@ -797,10 +781,10 @@ export function SimpleCommentForm() {
                 </Button>
               </div>
             </div>
-
+            {/* 
             {submitMutation.error && (
               <CommentFormErrors error={submitMutation.error} />
-            )}
+            )} */}
 
             {isConnected && chainId !== base.id && (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">

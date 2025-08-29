@@ -6,5 +6,6 @@ export const config = getDefaultConfig({
   projectId:
     process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || "YOUR_PROJECT_ID", // Get this from https://cloud.walletconnect.com
   chains: [base, mainnet, sepolia],
+  initialChainId: base.id,
   ssr: true,
 });
