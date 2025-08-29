@@ -76,6 +76,11 @@ export function createRootCommentsQueryKey(author: Hex, targetUri: string) {
   return ["comments", "root", author, targetUri] as const;
 }
 
+function abbreviateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "...";
+}
+
 interface Channel {
   id: string;
   name: string;
@@ -110,6 +115,7 @@ export function SimpleCommentForm() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isLoadingChannels, setIsLoadingChannels] = useState(true);
   const [formState, setFormState] = useState<"idle" | "post">("idle");
+  const [isDevMode, setIsDevMode] = useState(false);
 
   const editorRef = useRef<EditorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -215,6 +221,97 @@ export function SimpleCommentForm() {
       });
     }
   }, [isConnected, chainId, switchChainAsync]);
+
+  // Store channelId to prefill
+  const [channelIdToPrefill, setChannelIdToPrefill] = useState<string | null>(
+    null
+  );
+
+  // Parse query parameters and prefill form
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+
+    // Check for dev mode
+    const devParam = urlParams.get("__dev");
+    if (devParam === "true") {
+      setIsDevMode(true);
+    }
+
+    // Prefill targetUri
+    const targetUriParam = urlParams.get("targetUri");
+    if (targetUriParam) {
+      const decodedTargetUri = decodeURIComponent(targetUriParam);
+      console.log("Setting targetUri:", decodedTargetUri);
+      setTargetUri(decodedTargetUri);
+    }
+
+    // Store channelId to prefill after channels are loaded
+    const channelIdParam = urlParams.get("channelId");
+    if (channelIdParam) {
+      console.log("ChannelId to prefill:", channelIdParam);
+      setChannelIdToPrefill(channelIdParam);
+    }
+
+    // Handle metadata
+    const metadataParam = urlParams.get("metadata");
+    if (metadataParam) {
+      const metadataEntries: MetadataEntry[] = [];
+      const entries = metadataParam.split(",");
+
+      for (const entry of entries) {
+        const [key, value, type = "string"] = entry.split(":");
+        if (key && value) {
+          metadataEntries.push({
+            key: decodeURIComponent(key),
+            value: decodeURIComponent(value),
+            type: decodeURIComponent(type),
+          });
+        }
+      }
+
+      if (metadataEntries.length > 0) {
+        console.log("Setting metadata:", metadataEntries);
+        setMetadata(metadataEntries);
+      }
+    }
+  }, []);
+
+  // Store content to prefill
+  const [contentToPrefill, setContentToPrefill] = useState<string | null>(null);
+
+  // Parse content parameter and store it
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const contentParam = urlParams.get("content");
+
+    if (contentParam) {
+      const decodedContent = decodeURIComponent(contentParam);
+      console.log("Content to prefill:", decodedContent);
+      setContentToPrefill(decodedContent);
+    }
+  }, []);
+
+  // Prefill editor content when editor is ready
+  useEffect(() => {
+    if (contentToPrefill && editorRef.current?.editor) {
+      console.log("Editor ready, setting content:", contentToPrefill);
+      editorRef.current.editor.commands.setContent(contentToPrefill);
+      setContentToPrefill(null); // Clear after setting
+    }
+  }, [contentToPrefill, editorRef.current?.editor]);
+
+  // Set channelId after channels are loaded
+  useEffect(() => {
+    if (channelIdToPrefill && channels.length > 0 && !isLoadingChannels) {
+      console.log("Channels loaded, setting channelId:", channelIdToPrefill);
+      setChannelId(channelIdToPrefill);
+      setChannelIdToPrefill(null); // Clear after setting
+    }
+  }, [channelIdToPrefill, channels.length, isLoadingChannels]);
 
   const submitMutation = useMutation({
     mutationFn: async (formData: FormData): Promise<void> => {
@@ -435,6 +532,50 @@ export function SimpleCommentForm() {
 
   const isSubmitting = submitMutation.isPending;
 
+  // Generate share URL from current form state
+  const generateShareUrl = useCallback(() => {
+    const params = new URLSearchParams();
+
+    if (targetUri) {
+      params.set("targetUri", targetUri);
+    }
+
+    if (channelId) {
+      params.set("channelId", channelId);
+    }
+
+    const content =
+      editorRef.current?.editor?.getText({ blockSeparator: "\n" }) || "";
+    if (content.trim()) {
+      params.set("content", content.trim());
+    }
+
+    if (metadata.length > 0) {
+      const metadataString = metadata
+        .filter((entry) => entry.key.trim() && entry.value.trim())
+        .map((entry) => `${entry.key}:${entry.value}:${entry.type}`)
+        .join(",");
+      if (metadataString) {
+        params.set("metadata", metadataString);
+      }
+    }
+
+    const baseUrl = window.location.origin + window.location.pathname;
+    return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+  }, [targetUri, channelId, metadata]);
+
+  // Copy share URL to clipboard
+  const copyShareUrl = useCallback(async () => {
+    try {
+      const shareUrl = generateShareUrl();
+      await navigator.clipboard.writeText(shareUrl);
+      toast.success("Share URL copied to clipboard!");
+    } catch (error) {
+      console.error("Failed to copy to clipboard:", error);
+      toast.error("Failed to copy to clipboard");
+    }
+  }, [generateShareUrl]);
+
   const handleFileSelect = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       let files = Array.from(event.target.files || []);
@@ -583,11 +724,14 @@ export function SimpleCommentForm() {
                       className="flex items-center gap-2"
                     >
                       <Hash className="h-4 w-4" />
-                      {/* {abbreviateText(
-                        channels.find((c) => c.id === channelId)?.name ||
-                          "Channel",
-                        10
-                      )} */}
+                      {channelId !== "0" &&
+                      channels.find((c) => c.id === channelId)?.name
+                        ? abbreviateText(
+                            channels.find((c) => c.id === channelId)?.name ||
+                              "",
+                            10
+                          )
+                        : null}
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-80">
@@ -768,21 +912,38 @@ export function SimpleCommentForm() {
                     </div>
                   </PopoverContent>
                 </Popover>
-                <Button
-                  name="action"
-                  value="post"
-                  type="submit"
-                  className="ml-auto"
-                  disabled={isSubmitting || chainId !== base.id}
-                >
-                  <Image
-                    src="/logo-dark.svg"
-                    alt="Logo"
-                    width={16}
-                    height={16}
-                  />
-                  {formState === "post" ? "Sharing..." : "Share to ECP"}
-                </Button>
+                {isDevMode ? (
+                  <Button
+                    type="button"
+                    onClick={copyShareUrl}
+                    className="ml-auto"
+                    disabled={isSubmitting}
+                  >
+                    <Image
+                      src="/logo-dark.svg"
+                      alt="Logo"
+                      width={16}
+                      height={16}
+                    />
+                    Copy Share URL
+                  </Button>
+                ) : (
+                  <Button
+                    name="action"
+                    value="post"
+                    type="submit"
+                    className="ml-auto"
+                    disabled={isSubmitting || chainId !== base.id}
+                  >
+                    <Image
+                      src="/logo-dark.svg"
+                      alt="Logo"
+                      width={16}
+                      height={16}
+                    />
+                    {formState === "post" ? "Sharing..." : "Share to ECP"}
+                  </Button>
+                )}
               </div>
             </div>
             {/* 
