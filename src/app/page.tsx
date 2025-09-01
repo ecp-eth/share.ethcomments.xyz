@@ -12,28 +12,11 @@ export default function Home() {
         </div>
       </div>
 
-      <footer className="border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="container mx-auto px-4 py-6">
-          <div className="max-w-2xl mx-auto flex justify-between items-center">
-            <div className="text-sm text-gray-600 dark:text-gray-400">
-              <a
-                href="https://ethcomments.xyz"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img
-                  src="/logo-light.svg"
-                  alt="ECP Logo"
-                  className="inline-block h-6 align-middle mr-2"
-                />
-              </a>
-            </div>
-            <div className="flex space-x-4">
-              <Link href="/api-docs" className="text-sm transition-colors">
-                Embed a Share to ECP button on your website
-              </Link>
-            </div>
-          </div>
+      <footer className="">
+        <div className="text-center mx-auto px-4 py-6 text-gray-600">
+          <Link href="/api-docs" className="text-sm transition-colors">
+            Embed a Share to ECP button on your website
+          </Link>
         </div>
       </footer>
     </div>

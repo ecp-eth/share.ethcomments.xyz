@@ -53,6 +53,7 @@ import {
   postComment,
   type MetadataEntry as ECPMetadataEntry,
   createMetadataEntry,
+  getCommentId,
 } from "@ecp.eth/sdk/comments";
 import { COMMENT_MANAGER_ADDRESS } from "@ecp.eth/sdk";
 
@@ -116,6 +117,8 @@ export function SimpleCommentForm() {
   const [isLoadingChannels, setIsLoadingChannels] = useState(true);
   const [formState, setFormState] = useState<"idle" | "post">("idle");
   const [isDevMode, setIsDevMode] = useState(false);
+  const [commentLink, setCommentLink] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const editorRef = useRef<EditorRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -313,8 +316,45 @@ export function SimpleCommentForm() {
     }
   }, [channelIdToPrefill, channels.length, isLoadingChannels]);
 
+  // Add this helper function to get commentId from contract events
+  const getCommentIdFromTransaction = async (
+    txHash: string,
+    publicClient: any
+  ): Promise<string | null> => {
+    try {
+      // Get transaction receipt
+      const receipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash as `0x${string}`,
+      });
+
+      // Heuristic: extract possible commentId from logs emitted by the comment manager contract
+      // Many contracts emit an indexed bytes32 id as the first indexed parameter, which becomes topics[1]
+      const managerAddress = (
+        COMMENT_MANAGER_ADDRESS as `0x${string}`
+      ).toLowerCase();
+      for (const log of receipt.logs ?? []) {
+        // Some clients may not always normalize case; ensure lowercase compare
+        if (log.address && log.address.toLowerCase() === managerAddress) {
+          if (Array.isArray(log.topics) && log.topics.length >= 2) {
+            const possibleId = log.topics[1];
+            if (typeof possibleId === "string" && possibleId.startsWith("0x")) {
+              return possibleId;
+            }
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.warn("Failed to get commentId from receipt logs:", error);
+      return null;
+    }
+  };
+
   const submitMutation = useMutation({
-    mutationFn: async (formData: FormData): Promise<void> => {
+    mutationFn: async (
+      formData: FormData
+    ): Promise<{ txHash: string; commentId: string }> => {
       try {
         const submitAction = formData.get("action") as "post";
 
@@ -428,11 +468,32 @@ export function SimpleCommentForm() {
 
         // Create comment data using ECP SDK
         const commentData = createCommentData(signResult.data);
+        // Pre-compute deterministic commentId from comment data (contract view)
+        let precomputedCommentId: string | null = null;
+        try {
+          if (publicClient) {
+            const readContract = (args: unknown) =>
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (publicClient as any).readContract(args as any);
+            const cid = await getCommentId({
+              commentData: signResult.data,
+              // The SDK expects viem-compatible readContract
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              readContract,
+            });
+            precomputedCommentId = cid as unknown as string;
+          }
+        } catch (pcErr) {
+          console.warn(
+            "Failed to precompute commentId via getCommentId:",
+            pcErr
+          );
+        }
 
         // Post comment using ECP SDK with app signature
         const result = await postComment({
           comment: commentData,
-          appSignature: signResult.signature, // Use the app signature from the signer service
+          appSignature: signResult.signature,
           writeContract: async (args) => {
             console.log("writeContract called with args:", {
               functionName: args.functionName,
@@ -449,17 +510,49 @@ export function SimpleCommentForm() {
           },
         });
 
-        // Wait for transaction confirmation
+        // Always try to get the commentId
+        let commentId: string | null = null;
+
+        // First try to get it from transaction confirmation
         if (publicClient) {
-          await result.wait({
-            getContractEvents: publicClient.getContractEvents,
-            waitForTransactionReceipt: publicClient.waitForTransactionReceipt,
-          });
+          try {
+            const commentData = await result.wait({
+              getContractEvents: publicClient.getContractEvents,
+              waitForTransactionReceipt: publicClient.waitForTransactionReceipt,
+            });
+            console.log("Transaction confirmed:", result.txHash);
+            console.log("Comment data:", commentData);
+            commentId = commentData?.commentId || null;
+          } catch (waitError) {
+            console.warn(
+              "Transaction confirmation failed, but txHash is available:",
+              waitError
+            );
+          }
         }
 
-        console.log("Transaction confirmed:", result.txHash);
+        // If we still don't have commentId, try to get it manually from contract events
+        if (!commentId && publicClient) {
+          commentId = await getCommentIdFromTransaction(
+            result.txHash,
+            publicClient
+          );
+        }
 
-        return;
+        // If we still don't have commentId, fall back to precomputed value
+        if (!commentId && precomputedCommentId) {
+          commentId = precomputedCommentId;
+        }
+
+        // If we still don't have commentId, throw an error
+        if (!commentId) {
+          throw new Error("Failed to retrieve commentId from transaction");
+        }
+
+        return {
+          txHash: result.txHash,
+          commentId: commentId,
+        };
       } catch (e) {
         console.error("Error in comment submission:", {
           error: e,
@@ -487,12 +580,18 @@ export function SimpleCommentForm() {
         setFormState("idle");
       }
     },
-    onSuccess() {
+    onSuccess(result) {
       editorRef.current?.clear();
       submitMutation.reset();
       setTargetUri("");
       setMetadata([]);
-      toast.success("Comment posted successfully!");
+
+      console.log("Result:", result);
+
+      const commentId = result.commentId;
+      const commentLink = `https://calink.steer.fun/c/${commentId}`;
+      setCommentLink(commentLink);
+      setTxHash(result.txHash);
     },
     onError(error) {
       if (error instanceof InvalidCommentError) {
@@ -523,6 +622,12 @@ export function SimpleCommentForm() {
           errorMessage = "Comment cannot be empty";
         } else if (error.message === "No wallet address available") {
           errorMessage = "Please connect your wallet";
+        } else if (
+          error.message.includes("InvalidInputRpcError") ||
+          error.message.includes("invalid block range")
+        ) {
+          errorMessage =
+            "Transaction submitted successfully! Check your wallet for confirmation.";
         }
       }
 
@@ -941,7 +1046,9 @@ export function SimpleCommentForm() {
                       width={16}
                       height={16}
                     />
-                    {formState === "post" ? "Sharing..." : "Share to ECP"}
+                    {formState === "post"
+                      ? "Check your wallet..."
+                      : "Share to ECP"}
                   </Button>
                 )}
               </div>
@@ -962,6 +1069,57 @@ export function SimpleCommentForm() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Comment Link Display */}
+      {commentLink && (
+        <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-green-800 dark:text-green-200 mb-1">
+                Posted Successfully!
+              </h3>
+              <p className="text-sm text-green-700 dark:text-green-300">
+                View your comment:
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() => {
+                navigator.clipboard.writeText(commentLink);
+                toast.success("Link copied to clipboard!");
+              }}
+              className="text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-800"
+            >
+              Copy Link
+            </Button>
+          </div>
+          <a
+            href={commentLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block mt-2 text-sm text-green-600 font-bold dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 break-all"
+          >
+            {commentLink}
+          </a>
+
+          {/* BaseScan Link */}
+          <div className="mt-3 pt-3 border-t border-green-200 dark:border-green-700">
+            <p className="text-sm text-green-700 dark:text-green-300 mb-2">
+              View transaction:
+            </p>
+            <a
+              href={`https://basescan.org/tx/${txHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block mt-2 text-sm text-green-600 font-bold dark:text-green-400 hover:text-green-800 dark:hover:text-green-200 break-all"
+            >
+              https://basescan.org/tx/{txHash}
+            </a>
+          </div>
+        </div>
+      )}
     </form>
   );
 }
