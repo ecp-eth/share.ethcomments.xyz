@@ -22,15 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Plus,
-  Trash2,
-  ImageIcon,
-  Hash,
-  Send,
-  Ellipsis,
-  Unplug,
-} from "lucide-react";
+import { Plus, Trash2, ImageIcon, Hash, Ellipsis, Unplug } from "lucide-react";
 import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
@@ -58,6 +50,9 @@ import {
 import { COMMENT_MANAGER_ADDRESS } from "@ecp.eth/sdk";
 
 import { base } from "wagmi/chains";
+import type { PublicClient } from "viem";
+import type { UploadTrackerUploadedFile } from "@ecp.eth/react-editor/types";
+import type { ContractReadFunctions } from "@ecp.eth/sdk/comments/types";
 
 export const GenerateUploadUrlResponseSchema = z.object({
   url: z.string(),
@@ -319,7 +314,7 @@ export function SimpleCommentForm() {
   // Add this helper function to get commentId from contract events
   const getCommentIdFromTransaction = async (
     txHash: string,
-    publicClient: any
+    publicClient: PublicClient
   ): Promise<string | null> => {
     try {
       // Get transaction receipt
@@ -378,12 +373,11 @@ export function SimpleCommentForm() {
         const filesToUpload = editorRef.current?.getFilesForUpload() || [];
 
         await uploads.uploadFiles(filesToUpload, {
-          onSuccess(uploadedFile: unknown) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            editorRef.current?.setFileAsUploaded(uploadedFile as any);
+          onSuccess(uploadedFile: UploadTrackerUploadedFile) {
+            editorRef.current?.setFileAsUploaded(uploadedFile);
           },
-          onError(fileId: unknown) {
-            editorRef.current?.setFileUploadAsFailed(fileId as string);
+          onError(fileId: string) {
+            editorRef.current?.setFileUploadAsFailed(fileId);
           },
         });
 
@@ -472,13 +466,12 @@ export function SimpleCommentForm() {
         let precomputedCommentId: string | null = null;
         try {
           if (publicClient) {
-            const readContract = (args: unknown) =>
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (publicClient as any).readContract(args as any);
+            const readContract: ContractReadFunctions["getCommentId"] = (
+              args
+            ) => publicClient.readContract(args);
             const cid = await getCommentId({
               commentData: signResult.data,
               // The SDK expects viem-compatible readContract
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
               readContract,
             });
             precomputedCommentId = cid as unknown as string;

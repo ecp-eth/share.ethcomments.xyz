@@ -8,7 +8,7 @@ const GenerateUploadUrlRequestSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { filename } = GenerateUploadUrlRequestSchema.parse(body);
+    GenerateUploadUrlRequestSchema.parse(body);
 
     // Generate a unique upload URL for Pinata
     const uploadUrl = `https://api.pinata.cloud/pinning/pinFileToIPFS`;

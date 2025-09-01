@@ -17,6 +17,15 @@ export default function Home() {
           <Link href="/api-docs" className="text-sm transition-colors">
             Embed a Share to ECP button on your website
           </Link>
+          <span className="mx-2">·</span>
+          <Link
+            href="https://github.com/ecp-eth/share.ethcomments.xyz"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm transition-colors"
+          >
+            GitHub
+          </Link>
         </div>
       </footer>
     </div>
