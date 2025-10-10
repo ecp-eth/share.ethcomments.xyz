@@ -39,6 +39,7 @@ import {
   useIndexerSuggestions,
   usePinataUploadFiles,
 } from "@ecp.eth/react-editor/hooks";
+import { publicEnv } from "@/publicEnv";
 import { cn } from "@/lib/utils";
 import {
   createCommentData,
@@ -121,7 +122,10 @@ export function SimpleCommentForm() {
   const uploads = usePinataUploadFiles({
     allowedMimeTypes: Array.from(ALLOWED_UPLOAD_MIME_TYPES),
     maxFileSize: MAX_UPLOAD_FILE_SIZE,
-    pinataGatewayUrl: "amber-electoral-takin-876.mypinata.cloud",
+    pinataGatewayUrl: publicEnv.NEXT_PUBLIC_PINATA_GATEWAY_URL.replace(
+      /^https?:\/\//,
+      ""
+    ),
     generateUploadUrl: async (filename) => {
       const response = await fetch("/api/generate-upload-url", {
         method: "POST",
