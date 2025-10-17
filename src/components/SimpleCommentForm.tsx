@@ -26,7 +26,7 @@ import { Plus, Trash2, ImageIcon, Hash, Ellipsis, Unplug } from "lucide-react";
 import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
-import { InvalidCommentError } from "@ecp.eth/shared/errors";
+import { InvalidCommentError } from "@/lib/errors";
 import type { Hex } from "viem";
 import { toast } from "sonner";
 import {
