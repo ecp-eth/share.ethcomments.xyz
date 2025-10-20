@@ -1,4 +1,4 @@
-import { SimpleCommentForm } from "@/components/simple-comment-form";
+import { SimpleCommentForm } from "@/components/SimpleCommentForm";
 import Link from "next/link";
 
 export default function Home() {

@@ -6,6 +6,7 @@ import {
   ALLOWED_UPLOAD_MIME_TYPES,
   MAX_UPLOAD_FILE_SIZE,
 } from "@ecp.eth/react-editor";
+import { env } from "@/env";
 
 const PayloadSchema = z.object({
   filename: z.string().trim().min(1),
@@ -23,15 +24,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const pinataJwt = process.env.PINATA_JWT;
-    if (!pinataJwt) {
-      console.error("Missing PINATA_JWT env var");
-      return NextResponse.json(
-        { error: "Server misconfiguration: PINATA_JWT missing" },
-        { status: 500 }
-      );
-    }
-
+    const pinataJwt = env.PINATA_JWT;
     const pinata = new PinataSDK({
       pinataJwt,
       pinataGateway: publicEnv.NEXT_PUBLIC_PINATA_GATEWAY_URL,
