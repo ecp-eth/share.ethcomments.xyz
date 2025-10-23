@@ -62,6 +62,7 @@ import type {
 } from "@ecp.eth/sdk/comments/types";
 import { UploadResponse } from "pinata";
 import { config } from "@/lib/wagmi";
+import { prepareContractAssetForTransfer } from "@/lib/channel-fees";
 
 export const GenerateUploadUrlResponseSchema = z.object({
   url: z.string(),
@@ -488,9 +489,13 @@ export function SimpleCommentForm() {
                 }
 
                 if (fee?.contractAsset && fee.contractAsset.amount > 0n) {
-                  throw new Error(
-                    "The channel requires a fee to be paid in ERC20 or NFT, we don't support this yet"
-                  );
+                  await prepareContractAssetForTransfer({
+                    contractAsset: fee.contractAsset,
+                    hook: fee.hook,
+                    author: address,
+                    publicClient,
+                    walletClient,
+                  });
                 }
 
                 return fee;
