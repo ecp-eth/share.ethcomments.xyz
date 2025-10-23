@@ -1,4 +1,4 @@
-import { InvalidCommentError } from "@ecp.eth/shared/errors";
+import { InvalidCommentError } from "@/lib/errors";
 
 interface CommentFormErrorsProps {
   error: Error;

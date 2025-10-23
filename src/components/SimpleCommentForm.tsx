@@ -9,6 +9,7 @@ import {
   useWriteContract,
   usePublicClient,
   useDisconnect,
+  useWalletClient,
 } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ import { Plus, Trash2, ImageIcon, Hash, Ellipsis, Unplug } from "lucide-react";
 import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
 import { useMutation } from "@tanstack/react-query";
 import { z } from "zod";
-import { InvalidCommentError } from "@ecp.eth/shared/errors";
+import { InvalidCommentError } from "@/lib/errors";
 import type { Hex } from "viem";
 import { toast } from "sonner";
 import {
@@ -34,7 +35,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-
 import {
   useIndexerSuggestions,
   usePinataUploadFiles,
@@ -49,11 +49,19 @@ import {
   getCommentId,
 } from "@ecp.eth/sdk/comments";
 import { COMMENT_MANAGER_ADDRESS } from "@ecp.eth/sdk";
-
-import { base } from "wagmi/chains";
+import {
+  TotalFeeEstimation,
+  createEstimateChannelPostOrEditCommentFeeData,
+  estimateChannelPostCommentFee,
+} from "@ecp.eth/sdk/channel-manager";
 import type { PublicClient } from "viem";
 import type { UploadTrackerUploadedFile } from "@ecp.eth/react-editor/types";
-import type { ContractReadFunctions } from "@ecp.eth/sdk/comments/types";
+import type {
+  ContractReadFunctions,
+  CreateCommentDataParams,
+} from "@ecp.eth/sdk/comments/types";
+import { UploadResponse } from "pinata";
+import { config } from "@/lib/wagmi";
 
 export const GenerateUploadUrlResponseSchema = z.object({
   url: z.string(),
@@ -100,12 +108,17 @@ interface MetadataEntry {
 }
 
 export function SimpleCommentForm() {
+  const indexerAPIURL = publicEnv.NEXT_PUBLIC_COMMENTS_INDEXER_URL;
+  const selectedChain = config.chains[0];
+  const selectedChainId = selectedChain.id;
+
   const { address, isConnected, status } = useAccount();
   const chainId = useChainId();
   const { switchChainAsync } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
   const { disconnect } = useDisconnect();
   const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
   const [targetUri, setTargetUri] = useState("");
   const [metadata, setMetadata] = useState<MetadataEntry[]>([]);
   const [channelId, setChannelId] = useState("");
@@ -144,21 +157,19 @@ export function SimpleCommentForm() {
     },
   });
   const suggestions = useIndexerSuggestions({
-    indexerApiUrl: "https://api.ethcomments.xyz",
+    indexerApiUrl: indexerAPIURL,
   });
 
   const fetchChannels = useCallback(async () => {
     try {
       setIsLoadingChannels(true);
       const params = new URLSearchParams({
-        chainId: "8453", // Base chain ID
+        chainId: selectedChainId.toString(), // Base chain ID
         limit: "50",
         sort: "desc",
       });
 
-      const response = await fetch(
-        `https://api.ethcomments.xyz/api/channels?${params}`
-      );
+      const response = await fetch(`${indexerAPIURL}/api/channels?${params}`);
 
       if (!response.ok) {
         throw new Error(`Failed to fetch channels: ${response.status}`);
@@ -216,10 +227,15 @@ export function SimpleCommentForm() {
 
   // Automatically switch to Base when user connects
   useEffect(() => {
-    if (isConnected && chainId !== base.id) {
-      switchChainAsync({ chainId: base.id }).catch((error) => {
-        console.error("Failed to switch to Base chain:", error);
-        toast.error("Please switch to Base network to continue");
+    if (isConnected && chainId !== selectedChainId) {
+      switchChainAsync({ chainId: selectedChainId }).catch((error) => {
+        console.error(
+          `Failed to switch to ${selectedChain.name} chain:`,
+          error
+        );
+        toast.error(
+          `Please switch to ${selectedChain.name} network to continue`
+        );
       });
     }
   }, [isConnected, chainId, switchChainAsync]);
@@ -355,6 +371,10 @@ export function SimpleCommentForm() {
       formData: FormData
     ): Promise<{ txHash: string; commentId: string }> => {
       try {
+        if (!publicClient || !walletClient) {
+          throw new Error("Please connect your wallet to continue");
+        }
+
         const submitAction = formData.get("action") as "post";
 
         setFormState(submitAction);
@@ -373,17 +393,6 @@ export function SimpleCommentForm() {
         if (!editorRef.current?.editor) {
           throw new Error("Editor is not initialized");
         }
-
-        const filesToUpload = editorRef.current?.getFilesForUpload() || [];
-
-        await uploads.uploadFiles(filesToUpload, {
-          onSuccess(uploadedFile: UploadTrackerUploadedFile) {
-            editorRef.current?.setFileAsUploaded(uploadedFile);
-          },
-          onError(fileId: string) {
-            editorRef.current?.setFileUploadAsFailed(fileId);
-          },
-        });
 
         // validate content
         const content = z
@@ -410,14 +419,16 @@ export function SimpleCommentForm() {
           hasContent: !!content,
         });
 
-        // Ensure we're on the correct chain (Base)
-        if (chainId !== base.id) {
-          await switchChainAsync({ chainId: base.id });
+        // Ensure we're on the correct chain (Base on prod)
+        if (chainId !== selectedChainId) {
+          await switchChainAsync({ chainId: selectedChain.id });
         }
 
         if (!address) {
           throw new Error("No wallet address available");
         }
+
+        const targetUriToUse = targetUri || window.location.href;
 
         // Convert metadata to ECP format
         const ecpMetadata: ECPMetadataEntry[] = metadata
@@ -437,32 +448,88 @@ export function SimpleCommentForm() {
             );
           });
 
-        const signResponse = await fetch(
-          // Deploy your own signer service to Vercel in 1 click: https://github.com/ecp-eth/comments-monorepo/tree/main/examples/signer
-          "https://share-ethcomments-signer-service.vercel.app/api/post-comment/sign",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              author: address,
-              content,
-              metadata: ecpMetadata,
-              targetUri: targetUri || window.location.href,
-            }),
-          }
-        );
+        const [filesUploadResponse, channelFeePrepared, signResult] =
+          await Promise.all(
+            [
+              async () => {
+                const filesToUpload =
+                  editorRef.current?.getFilesForUpload() || [];
 
-        if (!signResponse.ok) {
-          const errorText = await signResponse.text();
-          console.error("Signer service error:", errorText);
-          throw new Error(
-            `Failed to get app signature: ${signResponse.status} ${errorText}`
+                return await uploads.uploadFiles(filesToUpload, {
+                  onSuccess(uploadedFile: UploadTrackerUploadedFile) {
+                    editorRef.current?.setFileAsUploaded(uploadedFile);
+                  },
+                  onError(fileId: string) {
+                    editorRef.current?.setFileUploadAsFailed(fileId);
+                  },
+                });
+              },
+              async () => {
+                let fee: TotalFeeEstimation | undefined;
+
+                if (channelId) {
+                  const channelIdBigInt = BigInt(channelId);
+                  // Estimate the fee for posting a comment to the channel
+                  const estimationCommentData =
+                    createEstimateChannelPostOrEditCommentFeeData({
+                      channelId: channelIdBigInt,
+                      author: address,
+                      content,
+                      targetUri: targetUriToUse,
+                      app: publicEnv.NEXT_PUBLIC_APP_SIGNER_ADDRESS,
+                    });
+                  fee = await estimateChannelPostCommentFee({
+                    commentData: estimationCommentData,
+                    metadata: [],
+                    msgSender: address,
+                    readContract: publicClient.readContract,
+                    channelId: channelIdBigInt,
+                  });
+                }
+
+                if (fee?.contractAsset && fee.contractAsset.amount > 0n) {
+                  throw new Error(
+                    "The channel requires a fee to be paid in ERC20 or NFT, we don't support this yet"
+                  );
+                }
+
+                return fee;
+              },
+              async () => {
+                const signResponse = await fetch(
+                  // Deploy your own signer service to Vercel in 1 click: https://github.com/ecp-eth/comments-monorepo/tree/main/examples/signer
+                  `${publicEnv.NEXT_PUBLIC_SIGNER_URL}/api/post-comment/sign`,
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      author: address,
+                      content,
+                      metadata: ecpMetadata,
+                      targetUri: targetUriToUse,
+                      chainId: selectedChainId,
+                    }),
+                  }
+                );
+
+                if (!signResponse.ok) {
+                  const errorText = await signResponse.text();
+                  console.error("Signer service error:", errorText);
+                  throw new Error(
+                    `Failed to get app signature: ${signResponse.status} ${errorText}`
+                  );
+                }
+
+                return await signResponse.json();
+              },
+            ].map(async (fn) => fn()) as [
+              Promise<UploadResponse[]>,
+              Promise<TotalFeeEstimation>,
+              Promise<{ data: CreateCommentDataParams; signature: Hex }>
+            ]
           );
-        }
-
-        const signResult = await signResponse.json();
 
         // Create comment data using ECP SDK
         const commentData = createCommentData(signResult.data);
@@ -487,10 +554,17 @@ export function SimpleCommentForm() {
           );
         }
 
+        console.log(
+          "channel fee in native token:",
+          channelFeePrepared.baseToken.amount,
+          COMMENT_MANAGER_ADDRESS
+        );
+
         // Post comment using ECP SDK with app signature
         const result = await postComment({
           comment: commentData,
           appSignature: signResult.signature,
+          fee: channelFeePrepared.baseToken.amount,
           writeContract: async (args) => {
             console.log("writeContract called with args:", {
               functionName: args.functionName,
@@ -498,11 +572,7 @@ export function SimpleCommentForm() {
               value: args.value?.toString() || "0",
             });
             return await writeContractAsync({
-              address: COMMENT_MANAGER_ADDRESS,
-              abi: args.abi,
-              functionName: args.functionName,
-              args: args.args,
-              value: args.value,
+              ...args,
             });
           },
         });
@@ -614,7 +684,7 @@ export function SimpleCommentForm() {
         } else if (error.message.includes("network")) {
           errorMessage = "Network error. Please check your connection";
         } else if (error.message.includes("chain")) {
-          errorMessage = "Please switch to Base network";
+          errorMessage = `Please switch to ${selectedChain.name} network`;
         } else if (error.message.includes("content")) {
           errorMessage = "Comment cannot be empty";
         } else if (error.message === "No wallet address available") {
@@ -1035,7 +1105,7 @@ export function SimpleCommentForm() {
                     value="post"
                     type="submit"
                     className="ml-auto"
-                    disabled={isSubmitting || chainId !== base.id}
+                    disabled={isSubmitting || chainId !== selectedChainId}
                   >
                     <Image
                       src="/logo-dark.svg"
@@ -1055,11 +1125,11 @@ export function SimpleCommentForm() {
               <CommentFormErrors error={submitMutation.error} />
             )} */}
 
-            {isConnected && chainId !== base.id && (
+            {isConnected && chainId !== selectedChainId && (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg dark:bg-yellow-900/20 dark:border-yellow-800">
                 <p className="text-sm text-yellow-800 dark:text-yellow-200">
                   ⚠️ You&apos;re connected to the wrong network. Please switch
-                  to Base network to post comments.
+                  to {selectedChain.name} network to post comments.
                 </p>
               </div>
             )}
