@@ -1,6 +1,7 @@
 import type { Chain } from "wagmi/chains";
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { publicEnv } from "@/publicEnv";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -26,4 +27,14 @@ export function getChainById<TChain extends Chain>(
     }
   }
   return undefined;
+}
+
+export function getSignerURL(path: string) {
+  const url = new URL(path, publicEnv.NEXT_PUBLIC_SIGNER_URL);
+  return url.toString();
+}
+
+export function getIndexerAPIURL(path: string) {
+  const url = new URL(path, publicEnv.NEXT_PUBLIC_COMMENTS_INDEXER_URL);
+  return url.toString();
 }

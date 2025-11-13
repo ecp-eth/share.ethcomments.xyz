@@ -15,7 +15,6 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-
 import {
   Select,
   SelectContent,
@@ -26,7 +25,7 @@ import {
 import { Plus, Trash2, ImageIcon, Hash, Ellipsis, Unplug } from "lucide-react";
 import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
 import { useMutation } from "@tanstack/react-query";
-import { z } from "zod";
+import { z } from "zod/v3";
 import { InvalidCommentError } from "@/lib/errors";
 import type { Hex } from "viem";
 import { toast } from "sonner";
@@ -40,7 +39,7 @@ import {
   usePinataUploadFiles,
 } from "@ecp.eth/react-editor/hooks";
 import { publicEnv } from "@/publicEnv";
-import { cn } from "@/lib/utils";
+import { cn, getIndexerAPIURL, getSignerURL } from "@/lib/utils";
 import {
   createCommentData,
   postComment,
@@ -62,6 +61,10 @@ import type {
 } from "@ecp.eth/sdk/comments/types";
 import { UploadResponse } from "pinata";
 import { config } from "@/lib/wagmi";
+import {
+  SignPostCommentRequestPayloadSchema,
+  SignPostCommentResponseBodySchema,
+} from "@ecp.eth/shared-signer/schemas/signer-api/post";
 
 export const GenerateUploadUrlResponseSchema = z.object({
   url: z.string(),
@@ -76,6 +79,8 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 ] as const;
 
 export const MAX_UPLOAD_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+console.log("COMMENT_MANAGER_ADDRESS", COMMENT_MANAGER_ADDRESS);
 
 export function createRootCommentsQueryKey(author: Hex, targetUri: string) {
   return ["comments", "root", author, targetUri] as const;
@@ -108,7 +113,6 @@ interface MetadataEntry {
 }
 
 export function SimpleCommentForm() {
-  const indexerAPIURL = publicEnv.NEXT_PUBLIC_COMMENTS_INDEXER_URL;
   const selectedChain = config.chains[0];
   const selectedChainId = selectedChain.id;
 
@@ -157,7 +161,7 @@ export function SimpleCommentForm() {
     },
   });
   const suggestions = useIndexerSuggestions({
-    indexerApiUrl: indexerAPIURL,
+    indexerApiUrl: publicEnv.NEXT_PUBLIC_COMMENTS_INDEXER_URL,
   });
 
   const fetchChannels = useCallback(async () => {
@@ -169,7 +173,7 @@ export function SimpleCommentForm() {
         sort: "desc",
       });
 
-      const response = await fetch(`${indexerAPIURL}/api/channels?${params}`);
+      const response = await fetch(getIndexerAPIURL(`/api/channels?${params}`));
 
       if (!response.ok) {
         throw new Error(`Failed to fetch channels: ${response.status}`);
@@ -210,7 +214,7 @@ export function SimpleCommentForm() {
     } finally {
       setIsLoadingChannels(false);
     }
-  }, [channelId]);
+  }, [channelId, selectedChainId]);
 
   // Helper function to check if a key is duplicate
   const isDuplicateKey = (key: string, currentIndex: number) => {
@@ -238,7 +242,13 @@ export function SimpleCommentForm() {
         );
       });
     }
-  }, [isConnected, chainId, switchChainAsync]);
+  }, [
+    isConnected,
+    chainId,
+    switchChainAsync,
+    selectedChainId,
+    selectedChain.name,
+  ]);
 
   // Store channelId to prefill
   const [channelIdToPrefill, setChannelIdToPrefill] = useState<string | null>(
@@ -448,88 +458,89 @@ export function SimpleCommentForm() {
             );
           });
 
-        const [filesUploadResponse, channelFeePrepared, signResult] =
-          await Promise.all(
-            [
-              async () => {
-                const filesToUpload =
-                  editorRef.current?.getFilesForUpload() || [];
+        const [, channelFeePrepared, signResult] = await Promise.all(
+          [
+            async () => {
+              const filesToUpload =
+                editorRef.current?.getFilesForUpload() || [];
 
-                return await uploads.uploadFiles(filesToUpload, {
-                  onSuccess(uploadedFile: UploadTrackerUploadedFile) {
-                    editorRef.current?.setFileAsUploaded(uploadedFile);
-                  },
-                  onError(fileId: string) {
-                    editorRef.current?.setFileUploadAsFailed(fileId);
-                  },
-                });
-              },
-              async () => {
-                let fee: TotalFeeEstimation | undefined;
+              return await uploads.uploadFiles(filesToUpload, {
+                onSuccess(uploadedFile: UploadTrackerUploadedFile) {
+                  editorRef.current?.setFileAsUploaded(uploadedFile);
+                },
+                onError(fileId: string) {
+                  editorRef.current?.setFileUploadAsFailed(fileId);
+                },
+              });
+            },
+            async () => {
+              let fee: TotalFeeEstimation | undefined;
 
-                if (channelId) {
-                  const channelIdBigInt = BigInt(channelId);
-                  // Estimate the fee for posting a comment to the channel
-                  const estimationCommentData =
-                    createEstimateChannelPostOrEditCommentFeeData({
-                      channelId: channelIdBigInt,
-                      author: address,
-                      content,
-                      targetUri: targetUriToUse,
-                      app: publicEnv.NEXT_PUBLIC_APP_SIGNER_ADDRESS,
-                    });
-                  fee = await estimateChannelPostCommentFee({
-                    commentData: estimationCommentData,
-                    metadata: [],
-                    msgSender: address,
-                    readContract: publicClient.readContract,
+              if (channelId) {
+                const channelIdBigInt = BigInt(channelId);
+                // Estimate the fee for posting a comment to the channel
+                const estimationCommentData =
+                  createEstimateChannelPostOrEditCommentFeeData({
                     channelId: channelIdBigInt,
+                    author: address,
+                    content,
+                    targetUri: targetUriToUse,
+                    app: publicEnv.NEXT_PUBLIC_APP_SIGNER_ADDRESS,
                   });
-                }
+                fee = await estimateChannelPostCommentFee({
+                  commentData: estimationCommentData,
+                  metadata: [],
+                  msgSender: address,
+                  readContract: publicClient.readContract,
+                  channelId: channelIdBigInt,
+                });
+              }
 
-                if (fee?.contractAsset && fee.contractAsset.amount > 0n) {
-                  throw new Error(
-                    "The channel requires a fee to be paid in ERC20 or NFT, we don't support this yet"
-                  );
-                }
-
-                return fee;
-              },
-              async () => {
-                const signResponse = await fetch(
-                  // Deploy your own signer service to Vercel in 1 click: https://github.com/ecp-eth/comments-monorepo/tree/main/examples/signer
-                  `${publicEnv.NEXT_PUBLIC_SIGNER_URL}/api/post-comment/sign`,
-                  {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                      author: address,
-                      content,
-                      metadata: ecpMetadata,
-                      targetUri: targetUriToUse,
-                      chainId: selectedChainId,
-                    }),
-                  }
+              if (fee?.contractAsset && fee.contractAsset.amount > 0n) {
+                throw new Error(
+                  "The channel requires a fee to be paid in ERC20 or NFT, we don't support this yet"
                 );
+              }
 
-                if (!signResponse.ok) {
-                  const errorText = await signResponse.text();
-                  console.error("Signer service error:", errorText);
-                  throw new Error(
-                    `Failed to get app signature: ${signResponse.status} ${errorText}`
-                  );
+              return fee;
+            },
+            async () => {
+              const signResponse = await fetch(
+                // Deploy your own signer service to Vercel in 1 click: https://github.com/ecp-eth/comments-monorepo/tree/main/examples/signer
+                getSignerURL("/api/post-comment/sign"),
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    author: address,
+                    content,
+                    metadata: ecpMetadata,
+                    targetUri: targetUriToUse,
+                    chainId: selectedChainId,
+                  } as z.input<typeof SignPostCommentRequestPayloadSchema>),
                 }
+              );
 
-                return await signResponse.json();
-              },
-            ].map(async (fn) => fn()) as [
-              Promise<UploadResponse[]>,
-              Promise<TotalFeeEstimation>,
-              Promise<{ data: CreateCommentDataParams; signature: Hex }>
-            ]
-          );
+              if (!signResponse.ok) {
+                const errorText = await signResponse.text();
+                console.error("Signer service error:", errorText);
+                throw new Error(
+                  `Failed to get app signature: ${signResponse.status} ${errorText}`
+                );
+              }
+
+              return SignPostCommentResponseBodySchema.parse(
+                await signResponse.json()
+              );
+            },
+          ].map(async (fn) => fn()) as [
+            Promise<UploadResponse[]>,
+            Promise<TotalFeeEstimation>,
+            Promise<{ data: CreateCommentDataParams; signature: Hex }>
+          ]
+        );
 
         // Create comment data using ECP SDK
         const commentData = createCommentData(signResult.data);
