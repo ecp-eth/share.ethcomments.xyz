@@ -21,5 +21,5 @@ export const publicEnv = {
     process.env.NEXT_PUBLIC_APP_SIGNER_ADDRESS ??
       never("Missing NEXT_PUBLIC_APP_SIGNER_ADDRESS")
   ),
-  NEXT_PUBLIC_CHAIN_ID: process.env.CHAIN_ID ?? 8453,
+  NEXT_PUBLIC_CHAIN_ID: process.env.NEXT_PUBLIC_CHAIN_ID ?? 8453,
 } as const;
