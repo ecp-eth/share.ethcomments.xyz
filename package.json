@@ -10,8 +10,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@ecp.eth/react-editor": "^0.0.5",
-    "@ecp.eth/sdk": "^0.0.35",
+    "@ecp.eth/react-editor": "^0.0.18",
+    "@ecp.eth/sdk": "^0.0.36",
+    "@ecp.eth/shared": "^0.0.18",
     "@ecp.eth/shared-signer": "^0.0.2",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-popover": "^1.1.15",
@@ -25,7 +26,7 @@
     "lottie-react": "^2.4.1",
     "lucide-react": "^0.474.0",
     "next": "15.4.4",
-    "pinata": "2.4.9",
+    "pinata": "2.5.0",
     "pino-pretty": "^13.0.0",
     "react": "~19.1.0",
     "react-dom": "~19.1.0",
