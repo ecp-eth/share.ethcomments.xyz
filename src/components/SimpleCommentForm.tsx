@@ -11,7 +11,50 @@ import {
   useDisconnect,
   useWalletClient,
 } from "wagmi";
+import {
+  Plus,
+  Trash2,
+  ImageIcon,
+  Hash,
+  Ellipsis,
+  Unplug,
+  CoinsIcon,
+} from "lucide-react";
+import type { Hex, PublicClient } from "viem";
+import { UploadResponse } from "pinata";
+import { toast } from "sonner";
+import { z } from "zod/v3";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { useMutation } from "@tanstack/react-query";
+import { COMMENT_MANAGER_ADDRESS } from "@ecp.eth/sdk";
+import {
+  createCommentData,
+  postComment,
+  type MetadataEntry as ECPMetadataEntry,
+  createMetadataEntry,
+  getCommentId,
+} from "@ecp.eth/sdk/comments";
+import {
+  TotalFeeEstimation,
+  createEstimateChannelPostOrEditCommentFeeData,
+  estimateChannelPostCommentFee,
+} from "@ecp.eth/sdk/channel-manager";
+import type {
+  ContractReadFunctions,
+  CreateCommentDataParams,
+} from "@ecp.eth/sdk/comments/types";
+import { useChannelFee } from "@ecp.eth/shared/hooks/useChannelFee";
+import { InvalidCommentError } from "@ecp.eth/shared/errors";
+import {
+  SignPostCommentRequestPayloadSchema,
+  SignPostCommentResponseBodySchema,
+} from "@ecp.eth/shared-signer/schemas/signer-api/post";
+import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
+import type { UploadTrackerUploadedFile } from "@ecp.eth/react-editor/types";
+import {
+  useIndexerSuggestions,
+  usePinataUploadFiles,
+} from "@ecp.eth/react-editor/hooks";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,49 +65,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, Trash2, ImageIcon, Hash, Ellipsis, Unplug } from "lucide-react";
-import { Editor, type EditorRef } from "@ecp.eth/react-editor/editor";
-import { useMutation } from "@tanstack/react-query";
-import { z } from "zod/v3";
-import { InvalidCommentError } from "@/lib/errors";
-import type { Hex } from "viem";
-import { toast } from "sonner";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  useIndexerSuggestions,
-  usePinataUploadFiles,
-} from "@ecp.eth/react-editor/hooks";
-import { publicEnv } from "@/publicEnv";
+import { Label } from "@/components/ui/label";
 import { cn, getIndexerAPIURL, getSignerURL } from "@/lib/utils";
-import {
-  createCommentData,
-  postComment,
-  type MetadataEntry as ECPMetadataEntry,
-  createMetadataEntry,
-  getCommentId,
-} from "@ecp.eth/sdk/comments";
-import { COMMENT_MANAGER_ADDRESS } from "@ecp.eth/sdk";
-import {
-  TotalFeeEstimation,
-  createEstimateChannelPostOrEditCommentFeeData,
-  estimateChannelPostCommentFee,
-} from "@ecp.eth/sdk/channel-manager";
-import type { PublicClient } from "viem";
-import type { UploadTrackerUploadedFile } from "@ecp.eth/react-editor/types";
-import type {
-  ContractReadFunctions,
-  CreateCommentDataParams,
-} from "@ecp.eth/sdk/comments/types";
-import { UploadResponse } from "pinata";
 import { config } from "@/lib/wagmi";
-import {
-  SignPostCommentRequestPayloadSchema,
-  SignPostCommentResponseBodySchema,
-} from "@ecp.eth/shared-signer/schemas/signer-api/post";
+import { prepareContractAssetForTransfer } from "@/lib/channel-fee";
+import { publicEnv } from "@/publicEnv";
 
 export const GenerateUploadUrlResponseSchema = z.object({
   url: z.string(),
@@ -79,8 +89,6 @@ export const ALLOWED_UPLOAD_MIME_TYPES = [
 ] as const;
 
 export const MAX_UPLOAD_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-
-console.log("COMMENT_MANAGER_ADDRESS", COMMENT_MANAGER_ADDRESS);
 
 export function createRootCommentsQueryKey(author: Hex, targetUri: string) {
   return ["comments", "root", author, targetUri] as const;
@@ -132,8 +140,27 @@ export function SimpleCommentForm() {
   const [isDevMode, setIsDevMode] = useState(false);
   const [commentLink, setCommentLink] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [content, setContent] = useState("");
 
   const editorRef = useRef<EditorRef>(null);
+  const {
+    data: {
+      nativeTokenCostInEthText,
+      nativeTokenCostInUSDText,
+      erc20CostText,
+    } = {},
+  } = useChannelFee({
+    action: "post",
+    channelId,
+    address,
+    content,
+    app: publicEnv.NEXT_PUBLIC_APP_SIGNER_ADDRESS,
+    targetUri:
+      targetUri ||
+      (typeof window !== "undefined" && window.location.href) ||
+      "",
+  });
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploads = usePinataUploadFiles({
@@ -497,9 +524,13 @@ export function SimpleCommentForm() {
               }
 
               if (fee?.contractAsset && fee.contractAsset.amount > 0n) {
-                throw new Error(
-                  "The channel requires a fee to be paid in ERC20 or NFT, we don't support this yet"
-                );
+                prepareContractAssetForTransfer({
+                  contractAsset: fee.contractAsset,
+                  hook: fee.hook,
+                  author: address,
+                  publicClient,
+                  walletClient,
+                });
               }
 
               return fee;
@@ -567,8 +598,7 @@ export function SimpleCommentForm() {
 
         console.log(
           "channel fee in native token:",
-          channelFeePrepared.baseToken.amount,
-          COMMENT_MANAGER_ADDRESS
+          channelFeePrepared.baseToken.amount
         );
 
         // Post comment using ECP SDK with app signature
@@ -884,6 +914,13 @@ export function SimpleCommentForm() {
               ref={editorRef}
               suggestions={suggestions}
               uploads={uploads}
+              onUpdate={() => {
+                setContent(
+                  editorRef.current?.editor?.getText({
+                    blockSeparator: "\n",
+                  }) ?? ""
+                );
+              }}
             />
 
             <div className="flex gap-2 justify-between items-center">
@@ -1095,40 +1132,59 @@ export function SimpleCommentForm() {
                     </div>
                   </PopoverContent>
                 </Popover>
-                {isDevMode ? (
-                  <Button
-                    type="button"
-                    onClick={copyShareUrl}
-                    className="ml-auto"
-                    disabled={isSubmitting}
-                  >
-                    <Image
-                      src="/logo-dark.svg"
-                      alt="Logo"
-                      width={16}
-                      height={16}
-                    />
-                    Copy Share URL
-                  </Button>
-                ) : (
-                  <Button
-                    name="action"
-                    value="post"
-                    type="submit"
-                    className="ml-auto"
-                    disabled={isSubmitting || chainId !== selectedChainId}
-                  >
-                    <Image
-                      src="/logo-dark.svg"
-                      alt="Logo"
-                      width={16}
-                      height={16}
-                    />
-                    {formState === "post"
-                      ? "Check your wallet..."
-                      : "Share to ECP"}
-                  </Button>
-                )}
+                <div className="flex flex-row items-center justify-between gap-2 ml-auto">
+                  {(nativeTokenCostInEthText || erc20CostText) && (
+                    <Label
+                      className="h-8 text-[0.8em] flex flex-row items-center gap-2 "
+                      aria-label="Cost of posting"
+                    >
+                      <CoinsIcon className="w-3 h-3" />
+                      Cost:{" "}
+                      {[
+                        nativeTokenCostInEthText +
+                          (nativeTokenCostInUSDText
+                            ? ` (≈ ${nativeTokenCostInUSDText})`
+                            : ""),
+                        erc20CostText,
+                      ]
+                        .filter(Boolean)
+                        .join(" and ")}{" "}
+                    </Label>
+                  )}
+                  {isDevMode ? (
+                    <Button
+                      type="button"
+                      onClick={copyShareUrl}
+                      className="ml-auto"
+                      disabled={isSubmitting}
+                    >
+                      <Image
+                        src="/logo-dark.svg"
+                        alt="Logo"
+                        width={16}
+                        height={16}
+                      />
+                      Copy Share URL
+                    </Button>
+                  ) : (
+                    <Button
+                      name="action"
+                      value="post"
+                      type="submit"
+                      disabled={isSubmitting || chainId !== selectedChainId}
+                    >
+                      <Image
+                        src="/logo-dark.svg"
+                        alt="Logo"
+                        width={16}
+                        height={16}
+                      />
+                      {formState === "post"
+                        ? "Check your wallet..."
+                        : "Share to ECP"}
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
             {/* 
