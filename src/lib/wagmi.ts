@@ -13,7 +13,9 @@ const selectedChain =
 export const config = getDefaultConfig({
   appName: "ECP share",
   projectId: publicEnv.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID,
-  transports: [http(publicEnv.NEXT_PUBLIC_RPC_URL)],
+  transports: {
+    [selectedChain.id]: http(publicEnv.NEXT_PUBLIC_RPC_URL),
+  },
   chains: [selectedChain],
   ssr: true,
 });
