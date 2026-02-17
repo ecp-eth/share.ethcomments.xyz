@@ -697,8 +697,10 @@ export function SimpleCommentForm() {
       console.log("Result:", result);
 
       const commentId = result.commentId;
-      const commentLink = `https://calink.steer.fun/c/${commentId}`;
-      setCommentLink(commentLink);
+      const commentUrl = new URL("https://ecp-eth.github.io/md/");
+      commentUrl.searchParams.set("commentId", commentId);
+      commentUrl.searchParams.set("chainId", selectedChainId.toString());
+      setCommentLink(commentUrl.toString());
       setTxHash(result.txHash);
     },
     onError(error) {
