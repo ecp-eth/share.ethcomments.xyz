@@ -26,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <meta name="base:app_id" content="6943bf76d19763ca26ddc3f0" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
       </head>
       <body

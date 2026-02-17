@@ -448,6 +448,7 @@ export function SimpleCommentForm() {
             body: JSON.stringify({
               author: address,
               content,
+              channelId,
               metadata: ecpMetadata,
               targetUri: targetUri || window.location.href,
             }),
