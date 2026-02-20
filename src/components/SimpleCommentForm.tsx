@@ -529,7 +529,7 @@ export function SimpleCommentForm() {
                     targetUri: targetUriToUse,
                     chainId: selectedChainId,
                     channelId,
-                  } as z.input<typeof SignPostCommentRequestPayloadSchema>),
+                  }),
                 }
               );
 
