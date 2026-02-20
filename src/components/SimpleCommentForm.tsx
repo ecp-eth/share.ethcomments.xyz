@@ -528,7 +528,7 @@ export function SimpleCommentForm() {
                     metadata: ecpMetadata,
                     targetUri: targetUriToUse,
                     chainId: selectedChainId,
-                    channelId: BigInt(channelId),
+                    channelId,
                   } as z.input<typeof SignPostCommentRequestPayloadSchema>),
                 }
               );
