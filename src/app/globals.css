@@ -70,3 +70,16 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+.tiptap.ProseMirror:focus {
+  outline: none;
+}
+
+.tiptap.ProseMirror:focus-visible {
+  outline: none;
+}
+
+[contenteditable]:focus,
+[contenteditable]:focus-visible {
+  outline: none;
+}

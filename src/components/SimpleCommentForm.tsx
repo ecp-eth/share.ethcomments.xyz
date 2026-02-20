@@ -18,7 +18,9 @@ import {
   Hash,
   Ellipsis,
   Unplug,
-  CoinsIcon,
+  Search,
+  Check,
+  Home,
 } from "lucide-react";
 import type { Hex, PublicClient } from "viem";
 import { UploadResponse } from "pinata";
@@ -70,7 +72,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Label } from "@/components/ui/label";
 import { cn, getIndexerAPIURL, getSignerURL } from "@/lib/utils";
 import { config } from "@/lib/wagmi";
 import { prepareContractAssetForTransfer } from "@/lib/channel-fee";
@@ -133,9 +134,14 @@ export function SimpleCommentForm() {
   const { data: walletClient } = useWalletClient();
   const [targetUri, setTargetUri] = useState("");
   const [metadata, setMetadata] = useState<MetadataEntry[]>([]);
-  const [channelId, setChannelId] = useState("");
+  const [channelId, setChannelId] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("channelId") || "";
+  });
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isLoadingChannels, setIsLoadingChannels] = useState(true);
+  const [channelSearch, setChannelSearch] = useState("");
   const [formState, setFormState] = useState<"idle" | "post">("idle");
   const [isDevMode, setIsDevMode] = useState(false);
   const [commentLink, setCommentLink] = useState<string | null>(null);
@@ -195,7 +201,7 @@ export function SimpleCommentForm() {
     try {
       setIsLoadingChannels(true);
       const params = new URLSearchParams({
-        chainId: selectedChainId.toString(), // Base chain ID
+        chainId: selectedChainId.toString(),
         limit: "50",
         sort: "desc",
       });
@@ -208,14 +214,12 @@ export function SimpleCommentForm() {
 
       const data = await response.json();
 
-      // Sort channels to put "home" first if it exists, then reverse the order of non-home channels
       const sortedChannels = data.results.sort((a: Channel, b: Channel) => {
         if (a.name.toLowerCase() === "home") return -1;
         if (b.name.toLowerCase() === "home") return 1;
         return 0;
       });
 
-      // Reverse the order of non-home channels
       const homeChannel = sortedChannels.find(
         (c: Channel) => c.name.toLowerCase() === "home"
       );
@@ -223,25 +227,16 @@ export function SimpleCommentForm() {
         const nonHomeChannels = sortedChannels
           .filter((c: Channel) => c.name.toLowerCase() !== "home")
           .reverse();
-        const finalChannels = [homeChannel, ...nonHomeChannels];
-        setChannels(finalChannels);
+        setChannels([homeChannel, ...nonHomeChannels]);
       } else {
         setChannels(sortedChannels);
-      }
-
-      // Set "home" as default if available, otherwise first channel
-      if (sortedChannels.length > 0 && !channelId) {
-        const homeChannel = sortedChannels.find(
-          (c: Channel) => c.name.toLowerCase() === "home"
-        );
-        setChannelId(homeChannel ? homeChannel.id : sortedChannels[0].id);
       }
     } catch (err) {
       console.error("Error fetching channels:", err);
     } finally {
       setIsLoadingChannels(false);
     }
-  }, [channelId, selectedChainId]);
+  }, [selectedChainId]);
 
   // Helper function to check if a key is duplicate
   const isDuplicateKey = (key: string, currentIndex: number) => {
@@ -277,39 +272,22 @@ export function SimpleCommentForm() {
     selectedChain.name,
   ]);
 
-  // Store channelId to prefill
-  const [channelIdToPrefill, setChannelIdToPrefill] = useState<string | null>(
-    null
-  );
-
   // Parse query parameters and prefill form
   useEffect(() => {
     if (typeof window === "undefined") return;
 
     const urlParams = new URLSearchParams(window.location.search);
 
-    // Check for dev mode
     const devParam = urlParams.get("__dev");
     if (devParam === "true") {
       setIsDevMode(true);
     }
 
-    // Prefill targetUri
     const targetUriParam = urlParams.get("targetUri");
     if (targetUriParam) {
-      const decodedTargetUri = decodeURIComponent(targetUriParam);
-      console.log("Setting targetUri:", decodedTargetUri);
-      setTargetUri(decodedTargetUri);
+      setTargetUri(decodeURIComponent(targetUriParam));
     }
 
-    // Store channelId to prefill after channels are loaded
-    const channelIdParam = urlParams.get("channelId");
-    if (channelIdParam) {
-      console.log("ChannelId to prefill:", channelIdParam);
-      setChannelIdToPrefill(channelIdParam);
-    }
-
-    // Handle metadata
     const metadataParam = urlParams.get("metadata");
     if (metadataParam) {
       const metadataEntries: MetadataEntry[] = [];
@@ -327,7 +305,6 @@ export function SimpleCommentForm() {
       }
 
       if (metadataEntries.length > 0) {
-        console.log("Setting metadata:", metadataEntries);
         setMetadata(metadataEntries);
       }
     }
@@ -359,14 +336,15 @@ export function SimpleCommentForm() {
     }
   }, [contentToPrefill, editorRef.current?.editor]);
 
-  // Set channelId after channels are loaded
+  // Set default channelId ("home" or first) when channels load and no channel is selected
   useEffect(() => {
-    if (channelIdToPrefill && channels.length > 0 && !isLoadingChannels) {
-      console.log("Channels loaded, setting channelId:", channelIdToPrefill);
-      setChannelId(channelIdToPrefill);
-      setChannelIdToPrefill(null); // Clear after setting
+    if (channels.length > 0 && !channelId) {
+      const homeChannel = channels.find(
+        (c) => c.name.toLowerCase() === "home"
+      );
+      setChannelId(homeChannel ? homeChannel.id : channels[0].id);
     }
-  }, [channelIdToPrefill, channels.length, isLoadingChannels]);
+  }, [channels, channelId]);
 
   // Add this helper function to get commentId from contract events
   const getCommentIdFromTransaction = async (
@@ -906,7 +884,7 @@ export function SimpleCommentForm() {
           <div className="space-y-6">
             <Editor
               className={cn(
-                "w-full p-2 rounded min-h-[200px] border-none shadow-none",
+                "w-full p-2 rounded min-h-[200px] border-none shadow-none outline-none focus-within:outline-none [&_*]:outline-none",
                 submitMutation.error &&
                   submitMutation.error instanceof InvalidCommentError &&
                   "border-destructive focus-visible:border-destructive"
@@ -938,7 +916,7 @@ export function SimpleCommentForm() {
                 </Button>
 
                 {/* Channel Popover */}
-                <Popover>
+                <Popover onOpenChange={(open) => { if (!open) setChannelSearch(""); }}>
                   <PopoverTrigger asChild>
                     <Button
                       variant="ghost"
@@ -956,43 +934,56 @@ export function SimpleCommentForm() {
                         : null}
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-80">
-                    <div className="space-y-4">
-                      <h4 className="font-medium leading-none">Channel</h4>
-                      <div className="space-y-2">
-                        <Select value={channelId} onValueChange={setChannelId}>
-                          <SelectTrigger>
-                            <SelectValue
-                              placeholder={
-                                isLoadingChannels
-                                  ? "Loading channels..."
-                                  : "Select a channel"
-                              }
-                            />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {channels.map((channel) => (
-                              <SelectItem key={channel.id} value={channel.id}>
-                                {channel.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-sm text-muted-foreground">
-                          Channels can set smart contract hooks for additional
-                          functionality, fees, gating and validation. The
-                          default &apos;home&apos; channel has no hook.{" "}
-                          <a
-                            href="https://ecp-channel-tool.vercel.app"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
-                          >
-                            Learn more about channels
-                          </a>
-                          .
-                        </p>
+                  <PopoverContent className="w-80 p-0">
+                    <div className="p-3 pb-0">
+                      <h4 className="font-medium leading-none mb-3">Channel</h4>
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search channels..."
+                          value={channelSearch}
+                          onChange={(e) => setChannelSearch(e.target.value)}
+                          className="pl-8"
+                        />
                       </div>
+                    </div>
+                    <div className="max-h-[200px] overflow-y-auto p-2">
+                      {isLoadingChannels ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">Loading channels...</p>
+                      ) : channels.filter((c) => c.name.toLowerCase().includes(channelSearch.toLowerCase())).length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">No channels found</p>
+                      ) : (
+                        channels
+                          .filter((c) => c.name.toLowerCase().includes(channelSearch.toLowerCase()))
+                          .map((channel) => (
+                            <button
+                              key={channel.id}
+                              type="button"
+                              onClick={() => setChannelId(channel.id)}
+                              className={cn(
+                                "flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left hover:bg-accent hover:text-accent-foreground transition-colors",
+                                channelId === channel.id && "bg-accent"
+                              )}
+                            >
+                              <Check className={cn("h-4 w-4 shrink-0", channelId === channel.id ? "opacity-100" : "opacity-0")} />
+                              {channel.name.toLowerCase() === "home" && <Home className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                              <span className="truncate">{channel.name}</span>
+                            </button>
+                          ))
+                      )}
+                    </div>
+                    <div className="px-3 py-2 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Channels can set hooks for fees, gating and validation.{" "}
+                        <a
+                          href="https://ecp-channel-tool.vercel.app"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                        >
+                          Learn more
+                        </a>
+                      </p>
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -1134,30 +1125,30 @@ export function SimpleCommentForm() {
                     </div>
                   </PopoverContent>
                 </Popover>
-                <div className="flex flex-row items-center justify-between gap-2 ml-auto">
-                  {(nativeTokenCostInEthText || erc20CostText) && (
-                    <Label
-                      className="h-8 text-[0.8em] flex flex-row items-center gap-2 "
-                      aria-label="Cost of posting"
-                    >
-                      <CoinsIcon className="w-3 h-3" />
-                      Cost:{" "}
+                <div className="flex items-center gap-3 ml-auto">
+                  {(erc20CostText ||
+                    (nativeTokenCostInEthText &&
+                      nativeTokenCostInEthText !== "0 ETH")) && (
+                    <span className="text-xs text-muted-foreground">
                       {[
-                        nativeTokenCostInEthText +
-                          (nativeTokenCostInUSDText
-                            ? ` (≈ ${nativeTokenCostInUSDText})`
-                            : ""),
-                        erc20CostText,
+                        nativeTokenCostInEthText &&
+                        nativeTokenCostInEthText !== "0 ETH"
+                          ? nativeTokenCostInEthText
+                          : "",
+                        nativeTokenCostInUSDText &&
+                        nativeTokenCostInEthText !== "0 ETH"
+                          ? `(${nativeTokenCostInUSDText})`
+                          : "",
+                        erc20CostText ? `+ ${erc20CostText}` : "",
                       ]
                         .filter(Boolean)
-                        .join(" and ")}{" "}
-                    </Label>
+                        .join(" ")}
+                    </span>
                   )}
                   {isDevMode ? (
                     <Button
                       type="button"
                       onClick={copyShareUrl}
-                      className="ml-auto"
                       disabled={isSubmitting}
                     >
                       <Image
@@ -1183,7 +1174,7 @@ export function SimpleCommentForm() {
                       />
                       {formState === "post"
                         ? "Check your wallet..."
-                        : "Share to ECP"}
+                        : "Share"}
                     </Button>
                   )}
                 </div>
